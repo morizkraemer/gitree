@@ -160,10 +160,11 @@ type model struct {
 	diffFile   string
 	diffScroll int
 
-	// Text input mode (e.g. new branch name)
+	// Text input mode (e.g. new branch name, commit message)
 	inputMode   bool
 	inputPrompt string
 	inputValue  string
+	inputAction string // "branch" or "commit"
 
 	// Status message (shown briefly, cleared after one tick)
 	statusMsg  string
@@ -476,29 +477,50 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.inputValue = ""
 				return m, nil
 			case "enter":
-				name := strings.TrimSpace(m.inputValue)
+				value := strings.TrimSpace(m.inputValue)
+				action := m.inputAction
 				m.inputMode = false
 				m.inputValue = ""
-				if name == "" {
+				if value == "" {
 					return m, nil
 				}
-				cmd := exec.Command("git", "checkout", "-b", name)
-				out, err := cmd.CombinedOutput()
-				if err != nil {
-					m.statusMsg = "✗ " + strings.TrimSpace(string(out))
-					return m, nil
-				}
-				m.currentBranch = name
-				m.statusMsg = "Created & switched to " + name
-				m.branches = loadBranches()
-				m.remoteBranches = loadRemoteBranches(m.branches)
-				for i, b := range m.branches {
-					if b.name == name {
-						m.cursors[panelBranches] = i
-						break
+				switch action {
+				case "branch":
+					cmd := exec.Command("git", "checkout", "-b", value)
+					out, err := cmd.CombinedOutput()
+					if err != nil {
+						m.statusMsg = "✗ " + strings.TrimSpace(string(out))
+						return m, nil
 					}
+					m.currentBranch = value
+					m.statusMsg = "Created & switched to " + value
+					m.branches = loadBranches()
+					m.remoteBranches = loadRemoteBranches(m.branches)
+					for i, b := range m.branches {
+						if b.name == value {
+							m.cursors[panelBranches] = i
+							break
+						}
+					}
+					m.commits = loadCommits(value)
+				case "commit":
+					cmd := exec.Command("git", "commit", "-m", value)
+					out, err := cmd.CombinedOutput()
+					if err != nil {
+						m.statusMsg = "✗ " + strings.TrimSpace(string(out))
+						return m, nil
+					}
+					_ = out
+					m.statusMsg = "✓ Committed: " + value
+					raw := loadChanges()
+					m.changesRaw = raw
+					m.changes = buildChangeTree(raw)
+					m.cursors[panelChanges] = 0
+					m.offsets[panelChanges] = 0
+					m.commits = loadCommits(m.selectedBranch())
+					m.branches = loadBranches()
+					m.remoteBranches = loadRemoteBranches(m.branches)
 				}
-				m.commits = loadCommits(name)
 				return m, nil
 			case "backspace":
 				if len(m.inputValue) > 0 {
@@ -700,11 +722,64 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.commits = loadCommits(m.selectedBranch())
 			return m, nil
 
+		case " ":
+			if m.activePanel == panelChanges && len(m.changes) > 0 {
+				entry := m.changes[m.cursors[panelChanges]]
+				if !entry.isDir {
+					status := entry.status
+					if strings.TrimSpace(status[:1]) != "" {
+						// File has staged changes — unstage it
+						exec.Command("git", "reset", "HEAD", "--", entry.filePath).Run()
+					} else {
+						// File is unstaged — stage it
+						exec.Command("git", "add", "--", entry.filePath).Run()
+					}
+					raw := loadChanges()
+					m.changesRaw = raw
+					m.changes = buildChangeTree(raw)
+					if m.cursors[panelChanges] >= len(m.changes) {
+						m.cursors[panelChanges] = len(m.changes) - 1
+					}
+					if m.cursors[panelChanges] < 0 {
+						m.cursors[panelChanges] = 0
+					}
+				}
+			}
+			return m, nil
+
+		case "a":
+			if m.activePanel == panelChanges && len(m.changes) > 0 {
+				// Stage all files
+				exec.Command("git", "add", "-A").Run()
+				raw := loadChanges()
+				m.changesRaw = raw
+				m.changes = buildChangeTree(raw)
+				m.statusMsg = "Staged all files"
+			}
+			return m, nil
+
+		case "c":
+			if m.activePanel == panelChanges {
+				// Check if there are staged changes
+				staged := git("diff", "--cached", "--name-only")
+				if len(staged) == 0 {
+					m.statusMsg = "✗ Nothing staged to commit"
+					return m, nil
+				}
+				m.inputMode = true
+				m.inputPrompt = "Commit message: "
+				m.inputValue = ""
+				m.inputAction = "commit"
+				m.statusMsg = ""
+			}
+			return m, nil
+
 		case "B":
 			if m.activePanel == panelBranches {
 				m.inputMode = true
 				m.inputPrompt = "New branch name: "
 				m.inputValue = ""
+				m.inputAction = "branch"
 				m.statusMsg = ""
 			}
 			return m, nil
@@ -833,7 +908,13 @@ func (m model) View() string {
 	commitsView := m.renderPanel(panelCommits, innerWidth, commitsHeight)
 
 	// Titles
-	changesTitle := titleStyle.Render(fmt.Sprintf(" Changes (%d) ", len(m.changesRaw)))
+	stagedCount := 0
+	for _, line := range m.changesRaw {
+		if len(line) >= 2 && strings.TrimSpace(line[:1]) != "" && line[:1] != "?" {
+			stagedCount++
+		}
+	}
+	changesTitle := titleStyle.Render(fmt.Sprintf(" Changes (%d) · Staged (%d) ", len(m.changesRaw), stagedCount))
 	branchesTitle := titleStyle.Render(fmt.Sprintf(" Local (%d) │ Remote (%d) ", len(m.branches), len(m.remoteBranches)))
 
 	commitLabel := m.selectedBranch()
@@ -849,7 +930,7 @@ func (m model) View() string {
 		return inactiveBorderStyle.Width(innerWidth).Height(h)
 	}
 
-	changesHelp := dimStyle.Render("  j/k: navigate · enter: diff · r: refresh")
+	changesHelp := dimStyle.Render("  space: stage/unstage · a: stage all · c: commit · enter: diff · r: refresh")
 	branchesHelp := dimStyle.Render("  h/l: local/remote · enter: checkout · B: new · f: fetch · p: pull · P: push")
 	commitsHelp := dimStyle.Render("  j/k: navigate")
 
@@ -1041,6 +1122,18 @@ func (m model) branchDisplay(idx int) string {
 
 func (m model) plainLine(panel, idx int, line string) string {
 	switch panel {
+	case panelChanges:
+		if idx < len(m.changes) {
+			entry := m.changes[idx]
+			if !entry.isDir {
+				status := entry.status
+				if len(status) >= 2 && strings.TrimSpace(status[:1]) != "" && status[:1] != "?" {
+					return "● " + line
+				}
+				return "○ " + line
+			}
+		}
+		return line
 	case panelBranches:
 		display := m.branchDisplay(idx)
 		if line == m.currentBranch {
@@ -1071,14 +1164,21 @@ func (m model) renderLine(panel, idx int, line string, width int) string {
 		if entry.isDir {
 			return connPart + treeDirStyle.Render(name)
 		}
+		// Staged indicator
+		stageIcon := ""
 		status := entry.status
+		if len(status) >= 2 && strings.TrimSpace(status[:1]) != "" && status[:1] != "?" {
+			stageIcon = branchCurrentStyle.Render("● ")
+		} else {
+			stageIcon = dimStyle.Render("○ ")
+		}
 		switch {
 		case strings.Contains(status, "A"), strings.Contains(status, "?"):
-			return connPart + statusAddedStyle.Render(name)
+			return stageIcon + connPart + statusAddedStyle.Render(name)
 		case strings.Contains(status, "D"):
-			return connPart + statusDeletedStyle.Render(name)
+			return stageIcon + connPart + statusDeletedStyle.Render(name)
 		default:
-			return connPart + statusModifiedStyle.Render(name)
+			return stageIcon + connPart + statusModifiedStyle.Render(name)
 		}
 
 	case panelBranches:

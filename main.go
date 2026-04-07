@@ -15,6 +15,12 @@ import (
 
 type tickMsg time.Time
 
+type gitOpResult struct {
+	op  string
+	err error
+	out string
+}
+
 // Panel indices
 const (
 	panelChanges  = 0
@@ -382,6 +388,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, tea.ClearScreen
 
+	case gitOpResult:
+		if msg.err != nil {
+			m.statusMsg = "✗ " + msg.op + ": " + strings.TrimSpace(msg.out)
+		} else {
+			m.statusMsg = "✓ " + msg.op + " complete"
+			// Reload after successful git op
+			raw := loadChanges()
+			m.changesRaw = raw
+			m.changes = buildChangeTree(raw)
+			m.branches = loadBranches()
+			m.commits = loadCommits(m.selectedBranch())
+		}
+		return m, nil
+
 	case tickMsg:
 		if !m.diffMode && !m.inputMode {
 			raw := loadChanges()
@@ -571,6 +591,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = ""
 			}
 			return m, nil
+
+		case "f":
+			if m.activePanel == panelBranches {
+				m.statusMsg = "Fetching..."
+				return m, func() tea.Msg {
+					cmd := exec.Command("git", "fetch", "--all", "--prune")
+					out, err := cmd.CombinedOutput()
+					return gitOpResult{op: "fetch", err: err, out: string(out)}
+				}
+			}
+			return m, nil
+
+		case "p":
+			if m.activePanel == panelBranches {
+				m.statusMsg = "Pulling..."
+				return m, func() tea.Msg {
+					cmd := exec.Command("git", "pull")
+					out, err := cmd.CombinedOutput()
+					return gitOpResult{op: "pull", err: err, out: string(out)}
+				}
+			}
+			return m, nil
+
+		case "P":
+			if m.activePanel == panelBranches {
+				m.statusMsg = "Pushing..."
+				return m, func() tea.Msg {
+					cmd := exec.Command("git", "push")
+					out, err := cmd.CombinedOutput()
+					return gitOpResult{op: "push", err: err, out: string(out)}
+				}
+			}
+			return m, nil
 		}
 	}
 	return m, nil
@@ -684,8 +737,12 @@ func (m model) View() string {
 		helpText = "  " + m.inputPrompt + m.inputValue + "█"
 	} else if m.statusMsg != "" {
 		helpText = "  " + m.statusMsg
+	} else if m.activePanel == panelBranches {
+		helpText = "  j/k: navigate · enter: checkout · B: new branch · f: fetch · p: pull · P: push · q: quit"
+	} else if m.activePanel == panelChanges {
+		helpText = "  j/k: navigate · enter: diff · tab: switch panel · r: refresh · q: quit"
 	} else {
-		helpText = "  tab: switch panel · j/k: navigate · enter: select · B: new branch · r: refresh · q: quit"
+		helpText = "  j/k: navigate · tab: switch panel · r: refresh · q: quit"
 	}
 	help := dimStyle.Render(helpText)
 

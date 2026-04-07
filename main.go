@@ -132,16 +132,27 @@ type branchEntry struct {
 	behind int
 }
 
-type model struct {
-	changes       []changeEntry
-	changesRaw    []string // raw porcelain lines for count
-	branches      []branchEntry
-	commits       []string
-	currentBranch string
+// remoteBranchEntry holds a remote branch reference
+type remoteBranchEntry struct {
+	name   string // e.g. "origin/feature-x"
+	remote string // e.g. "origin"
+	branch string // e.g. "feature-x"
+}
 
-	activePanel int
-	cursors     [3]int
-	offsets     [3]int
+type model struct {
+	changes        []changeEntry
+	changesRaw     []string // raw porcelain lines for count
+	branches       []branchEntry
+	remoteBranches []remoteBranchEntry
+	commits        []string
+	currentBranch  string
+
+	activePanel    int
+	cursors        [3]int
+	offsets        [3]int
+	branchSub      int // 0 = local, 1 = remote
+	remoteCursor   int
+	remoteOffset   int
 
 	// Diff preview overlay
 	diffMode   bool
@@ -268,6 +279,36 @@ func loadBranches() []branchEntry {
 	return entries
 }
 
+func loadRemoteBranches(localBranches []branchEntry) []remoteBranchEntry {
+	raw := git("branch", "-r", "--format=%(refname:short)")
+	localSet := make(map[string]bool)
+	for _, b := range localBranches {
+		localSet[b.name] = true
+	}
+	var entries []remoteBranchEntry
+	for _, name := range raw {
+		// Skip HEAD pointers like "origin/HEAD"
+		if strings.Contains(name, "/HEAD") {
+			continue
+		}
+		// Extract remote and branch name
+		parts := strings.SplitN(name, "/", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		// Skip if a local branch with same name already exists
+		if localSet[parts[1]] {
+			continue
+		}
+		entries = append(entries, remoteBranchEntry{
+			name:   name,
+			remote: parts[0],
+			branch: parts[1],
+		})
+	}
+	return entries
+}
+
 func loadDiff(filePath, status string) []string {
 	var args []string
 	if strings.Contains(status, "?") {
@@ -333,11 +374,12 @@ func initialModel() model {
 	}
 	raw := loadChanges()
 	m := model{
-		changesRaw:    raw,
-		changes:       buildChangeTree(raw),
-		branches:      branches,
-		currentBranch: cur,
-		activePanel:   panelChanges,
+		changesRaw:     raw,
+		changes:        buildChangeTree(raw),
+		branches:       branches,
+		remoteBranches: loadRemoteBranches(branches),
+		currentBranch:  cur,
+		activePanel:    panelChanges,
 	}
 	m.cursors[panelBranches] = cursorIdx
 	m.commits = loadCommits(m.selectedBranch())
@@ -398,6 +440,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.changesRaw = raw
 			m.changes = buildChangeTree(raw)
 			m.branches = loadBranches()
+			m.remoteBranches = loadRemoteBranches(m.branches)
 			m.commits = loadCommits(m.selectedBranch())
 		}
 		return m, nil
@@ -408,6 +451,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.changesRaw = raw
 			m.changes = buildChangeTree(raw)
 			m.branches = loadBranches()
+			m.remoteBranches = loadRemoteBranches(m.branches)
 			m.commits = loadCommits(m.selectedBranch())
 		}
 		return m, tickCmd()
@@ -436,6 +480,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentBranch = name
 				m.statusMsg = "Created & switched to " + name
 				m.branches = loadBranches()
+				m.remoteBranches = loadRemoteBranches(m.branches)
 				for i, b := range m.branches {
 					if b.name == name {
 						m.cursors[panelBranches] = i
@@ -530,6 +575,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case panelBranches:
+				if m.branchSub == 1 {
+					// Remote branch: checkout as local tracking branch
+					if len(m.remoteBranches) > 0 && m.remoteCursor < len(m.remoteBranches) {
+						rb := m.remoteBranches[m.remoteCursor]
+						cmd := exec.Command("git", "checkout", "-b", rb.branch, "--track", rb.name)
+						out, err := cmd.CombinedOutput()
+						if err != nil {
+							// Maybe local branch already exists, try just checkout
+							cmd2 := exec.Command("git", "checkout", "--track", rb.name)
+							out2, err2 := cmd2.CombinedOutput()
+							if err2 != nil {
+								m.statusMsg = "✗ " + strings.TrimSpace(string(out))
+								return m, nil
+							}
+							out = out2
+							_ = out
+						}
+						m.currentBranch = rb.branch
+						m.statusMsg = "Checked out " + rb.branch + " from " + rb.name
+						m.branches = loadBranches()
+						m.remoteBranches = loadRemoteBranches(m.branches)
+						for i, b := range m.branches {
+							if b.name == rb.branch {
+								m.cursors[panelBranches] = i
+								break
+							}
+						}
+						m.branchSub = 0
+						raw := loadChanges()
+						m.changesRaw = raw
+						m.changes = buildChangeTree(raw)
+						m.commits = loadCommits(m.selectedBranch())
+					}
+					return m, nil
+				}
 				target := m.selectedBranch()
 				if target == m.currentBranch {
 					m.statusMsg = "Already on " + target
@@ -547,12 +627,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.changesRaw = raw
 				m.changes = buildChangeTree(raw)
 				m.branches = loadBranches()
+				m.remoteBranches = loadRemoteBranches(m.branches)
 				m.commits = loadCommits(m.selectedBranch())
 				return m, nil
 			}
 			return m, nil
 
 		case "j", "down":
+			if m.activePanel == panelBranches && m.branchSub == 1 {
+				if m.remoteCursor < len(m.remoteBranches)-1 {
+					m.remoteCursor++
+				}
+				return m, nil
+			}
 			items := m.panelItems(m.activePanel)
 			if m.cursors[m.activePanel] < len(items)-1 {
 				m.cursors[m.activePanel]++
@@ -565,6 +652,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "k", "up":
+			if m.activePanel == panelBranches && m.branchSub == 1 {
+				if m.remoteCursor > 0 {
+					m.remoteCursor--
+				}
+				return m, nil
+			}
 			if m.cursors[m.activePanel] > 0 {
 				m.cursors[m.activePanel]--
 			}
@@ -575,11 +668,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case "h", "left":
+			if m.activePanel == panelBranches && m.branchSub == 1 {
+				m.branchSub = 0
+			}
+			return m, nil
+
+		case "l", "right":
+			if m.activePanel == panelBranches && m.branchSub == 0 {
+				m.branchSub = 1
+			}
+			return m, nil
+
 		case "r":
 			raw := loadChanges()
 			m.changesRaw = raw
 			m.changes = buildChangeTree(raw)
 			m.branches = loadBranches()
+			m.remoteBranches = loadRemoteBranches(m.branches)
 			m.commits = loadCommits(m.selectedBranch())
 			return m, nil
 
@@ -712,12 +818,12 @@ func (m model) View() string {
 	}
 
 	changesView := m.renderPanel(panelChanges, innerWidth, changesHeight)
-	branchesView := m.renderPanel(panelBranches, innerWidth, branchesHeight)
+	branchesView := m.renderBranchesPanel(innerWidth, branchesHeight)
 	commitsView := m.renderPanel(panelCommits, innerWidth, commitsHeight)
 
 	// Titles
 	changesTitle := titleStyle.Render(fmt.Sprintf(" Changes (%d) ", len(m.changesRaw)))
-	branchesTitle := titleStyle.Render(fmt.Sprintf(" Branches (%d) ", len(m.branches)))
+	branchesTitle := titleStyle.Render(fmt.Sprintf(" Local (%d) │ Remote (%d) ", len(m.branches), len(m.remoteBranches)))
 
 	commitLabel := m.selectedBranch()
 	if commitLabel == "" {
@@ -738,7 +844,7 @@ func (m model) View() string {
 	} else if m.statusMsg != "" {
 		helpText = "  " + m.statusMsg
 	} else if m.activePanel == panelBranches {
-		helpText = "  j/k: navigate · enter: checkout · B: new branch · f: fetch · p: pull · P: push · q: quit"
+		helpText = "  j/k: navigate · h/l: local/remote · enter: checkout · B: new branch · f: fetch · p: pull · P: push · q: quit"
 	} else if m.activePanel == panelChanges {
 		helpText = "  j/k: navigate · enter: diff · tab: switch panel · r: refresh · q: quit"
 	} else {
@@ -771,6 +877,93 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return string(runes[:max])
+}
+
+func (m *model) renderBranchesPanel(width, height int) string {
+	isActive := m.activePanel == panelBranches
+	leftWidth := width / 2
+	rightWidth := width - leftWidth - 1 // -1 for separator
+	if rightWidth < 1 {
+		rightWidth = 1
+	}
+	if leftWidth < 1 {
+		leftWidth = 1
+	}
+
+	// Render local branches (left side)
+	var leftLines []string
+	cursor := m.cursors[panelBranches]
+	if cursor < m.offsets[panelBranches] {
+		m.offsets[panelBranches] = cursor
+	}
+	if cursor >= m.offsets[panelBranches]+height {
+		m.offsets[panelBranches] = cursor - height + 1
+	}
+	for i := m.offsets[panelBranches]; i < len(m.branches) && i < m.offsets[panelBranches]+height; i++ {
+		b := m.branches[i]
+		isSelected := i == cursor && isActive && m.branchSub == 0
+		isCursor := i == cursor && !isSelected
+		display := m.branchDisplay(i)
+		prefix := "  "
+		if b.name == m.currentBranch {
+			prefix = "● "
+		}
+		plain := truncate(prefix+display, leftWidth)
+		if isSelected {
+			leftLines = append(leftLines, selectedStyle.Width(leftWidth).Render(plain))
+		} else if isCursor {
+			leftLines = append(leftLines, cursorStyle.Width(leftWidth).Render(plain))
+		} else {
+			// Build styled version
+			suffix := ""
+			if b.ahead > 0 {
+				suffix += " " + aheadStyle.Render(fmt.Sprintf("↑%d", b.ahead))
+			}
+			if b.behind > 0 {
+				suffix += " " + behindStyle.Render(fmt.Sprintf("↓%d", b.behind))
+			}
+			if b.name == m.currentBranch {
+				leftLines = append(leftLines, branchCurrentStyle.Render(truncate("● "+b.name, leftWidth))+suffix)
+			} else {
+				leftLines = append(leftLines, "  "+truncate(b.name, leftWidth-2)+suffix)
+			}
+		}
+	}
+	for len(leftLines) < height {
+		leftLines = append(leftLines, strings.Repeat(" ", leftWidth))
+	}
+
+	// Render remote branches (right side)
+	var rightLines []string
+	if m.remoteCursor < m.remoteOffset {
+		m.remoteOffset = m.remoteCursor
+	}
+	if m.remoteCursor >= m.remoteOffset+height {
+		m.remoteOffset = m.remoteCursor - height + 1
+	}
+	for i := m.remoteOffset; i < len(m.remoteBranches) && i < m.remoteOffset+height; i++ {
+		rb := m.remoteBranches[i]
+		isSelected := i == m.remoteCursor && isActive && m.branchSub == 1
+		plain := truncate("  "+rb.name, rightWidth)
+		if isSelected {
+			rightLines = append(rightLines, selectedStyle.Width(rightWidth).Render(plain))
+		} else {
+			styled := "  " + dimStyle.Render(rb.remote+"/") + rb.branch
+			rightLines = append(rightLines, truncate(styled, rightWidth+10)) // extra room for ANSI
+		}
+	}
+	for len(rightLines) < height {
+		rightLines = append(rightLines, strings.Repeat(" ", rightWidth))
+	}
+
+	// Combine left and right with separator
+	sep := dimStyle.Render("│")
+	var lines []string
+	for i := 0; i < height; i++ {
+		lines = append(lines, leftLines[i]+sep+rightLines[i])
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func (m *model) renderPanel(panel, width, height int) string {

@@ -72,8 +72,29 @@ func buildChangeTree(porcelain []string) []changeEntry {
 		}
 	}
 
+	// Skip single-child directory wrapper nodes at the top
+	pathPrefix := ""
+	collapsed := root
+	for len(collapsed.children) == 1 {
+		var only *treeNode
+		var onlyName string
+		for n, v := range collapsed.children {
+			only = v
+			onlyName = n
+		}
+		if !only.isDir {
+			break
+		}
+		if pathPrefix == "" {
+			pathPrefix = onlyName
+		} else {
+			pathPrefix = pathPrefix + "/" + onlyName
+		}
+		collapsed = only
+	}
+
 	var entries []changeEntry
-	flattenTree(root, "", "", &entries)
+	flattenTree(collapsed, "", pathPrefix, &entries)
 	return entries
 }
 

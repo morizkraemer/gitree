@@ -165,8 +165,9 @@ type model struct {
 	inputPrompt string
 	inputValue  string
 
-	// Status message (shown briefly)
-	statusMsg string
+	// Status message (shown briefly, cleared after one tick)
+	statusMsg  string
+	statusTick int
 
 	width  int
 	height int
@@ -453,6 +454,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.branches = loadBranches()
 			m.remoteBranches = loadRemoteBranches(m.branches)
 			m.commits = loadCommits(m.selectedBranch())
+		}
+		if m.statusMsg != "" {
+			if m.statusTick >= 2 {
+				m.statusMsg = ""
+				m.statusTick = 0
+			} else {
+				m.statusTick++
+			}
+		} else {
+			m.statusTick = 0
 		}
 		return m, tickCmd()
 
@@ -796,8 +807,8 @@ func (m model) View() string {
 	contentWidth := m.width - 2
 	innerWidth := contentWidth - 4 // panel borders
 
-	// 3 titles (1 line each) + 3 panel borders (2 lines each) + 1 help line + 2 outer border = 12 lines of chrome
-	available := m.height - 12
+	// 3 titles (1 line each) + 3 panel borders (2 lines each) + 3 help lines + 3 blank lines + 1 status line + 2 outer border = 18 lines of chrome
+	available := m.height - 18
 	if available < 9 {
 		available = 9
 	}
@@ -838,28 +849,33 @@ func (m model) View() string {
 		return inactiveBorderStyle.Width(innerWidth).Height(h)
 	}
 
-	var helpText string
+	changesHelp := dimStyle.Render("  j/k: navigate · enter: diff · r: refresh")
+	branchesHelp := dimStyle.Render("  h/l: local/remote · enter: checkout · B: new · f: fetch · p: pull · P: push")
+	commitsHelp := dimStyle.Render("  j/k: navigate")
+
+	var statusLine string
 	if m.inputMode {
-		helpText = "  " + m.inputPrompt + m.inputValue + "█"
+		statusLine = dimStyle.Render("  " + m.inputPrompt + m.inputValue + "█")
 	} else if m.statusMsg != "" {
-		helpText = "  " + m.statusMsg
-	} else if m.activePanel == panelBranches {
-		helpText = "  j/k: navigate · h/l: local/remote · enter: checkout · B: new branch · f: fetch · p: pull · P: push · q: quit"
-	} else if m.activePanel == panelChanges {
-		helpText = "  j/k: navigate · enter: diff · tab: switch panel · r: refresh · q: quit"
+		statusLine = "  " + m.statusMsg
 	} else {
-		helpText = "  j/k: navigate · tab: switch panel · r: refresh · q: quit"
+		statusLine = dimStyle.Render("  tab: switch panel · q: quit")
 	}
-	help := dimStyle.Render(helpText)
 
 	inner := lipgloss.JoinVertical(lipgloss.Left,
 		changesTitle,
 		borderFn(panelChanges, changesHeight).Render(changesView),
+		changesHelp,
+		"",
 		branchesTitle,
 		borderFn(panelBranches, branchesHeight).Render(branchesView),
+		branchesHelp,
+		"",
 		commitsTitle,
 		borderFn(panelCommits, commitsHeight).Render(commitsView),
-		help,
+		commitsHelp,
+		"",
+		statusLine,
 	)
 
 	return outerBorderStyle.

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Styles
@@ -87,6 +88,16 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return string(runes[:max])
+}
+
+// fitWidth truncates s to width display cells (ANSI-aware) and pads with spaces.
+func fitWidth(s string, width int) string {
+	s = ansi.Truncate(s, width, "")
+	pad := width - lipgloss.Width(s)
+	if pad > 0 {
+		s += strings.Repeat(" ", pad)
+	}
+	return s
 }
 
 func statusTag(status string) string {
@@ -311,11 +322,13 @@ func (m *model) renderBranchesPanel(width, height int) string {
 			if b.behind > 0 {
 				suffix += " " + behindStyle.Render(fmt.Sprintf("↓%d", b.behind))
 			}
+			var content string
 			if b.name == m.currentBranch {
-				leftLines = append(leftLines, branchCurrentStyle.Render(truncate("● "+b.name, leftWidth))+suffix)
+				content = branchCurrentStyle.Render("● "+b.name) + suffix
 			} else {
-				leftLines = append(leftLines, "  "+truncate(b.name, leftWidth-2)+suffix)
+				content = "  " + b.name + suffix
 			}
+			leftLines = append(leftLines, fitWidth(content, leftWidth))
 		}
 	}
 	for len(leftLines) < height {
@@ -338,7 +351,7 @@ func (m *model) renderBranchesPanel(width, height int) string {
 			rightLines = append(rightLines, selectedStyle.Width(rightWidth).Render(plain))
 		} else {
 			styled := "  " + dimStyle.Render(rb.remote+"/") + rb.branch
-			rightLines = append(rightLines, truncate(styled, rightWidth+10)) // extra room for ANSI
+			rightLines = append(rightLines, fitWidth(styled, rightWidth))
 		}
 	}
 	for len(rightLines) < height {
@@ -420,9 +433,9 @@ func (m model) plainLine(panel, idx int, line string) string {
 			if !entry.isDir {
 				display := entry.display
 				tag := statusTagPlain(entry.status)
-				if lastConn := strings.LastIndex(display, "── "); lastConn >= 0 {
-					prefix := display[:lastConn+len("── ")]
-					name := display[lastConn+len("── "):]
+				if lastConn := strings.LastIndex(display, "─ "); lastConn >= 0 {
+					prefix := display[:lastConn+len("─ ")]
+					name := display[lastConn+len("─ "):]
 					return prefix + tag + " " + name
 				}
 				return tag + " " + display
@@ -451,9 +464,9 @@ func (m model) renderLine(panel, idx int, line string, width int) string {
 		// Split connector prefix from the name
 		name := entry.display
 		prefix := ""
-		if lastConn := strings.LastIndex(name, "── "); lastConn >= 0 {
-			prefix = name[:lastConn+len("── ")]
-			name = name[lastConn+len("── "):]
+		if lastConn := strings.LastIndex(name, "─ "); lastConn >= 0 {
+			prefix = name[:lastConn+len("─ ")]
+			name = name[lastConn+len("─ "):]
 		}
 		connPart := treeConnectorStyle.Render(prefix)
 		if entry.isDir {

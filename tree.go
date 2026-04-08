@@ -86,11 +86,11 @@ func flattenTree(node *treeNode, prefix string, pathPrefix string, entries *[]ch
 		child := node.children[name]
 		isLast := i == len(names)-1
 
-		connector := "├── "
-		childPrefix := prefix + "│   "
+		connector := "├─ "
+		childPrefix := prefix + "│  "
 		if isLast {
-			connector = "└── "
-			childPrefix = prefix + "    "
+			connector = "└─ "
+			childPrefix = prefix + "   "
 		}
 
 		fullPath := name

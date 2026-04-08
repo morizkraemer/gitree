@@ -42,6 +42,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		if !m.diffMode && !m.inputMode {
+			m.currentBranch = currentBranch()
 			raw := loadChanges()
 			m.changesRaw = raw
 			m.changes = buildChangeTree(raw)

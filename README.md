@@ -13,8 +13,8 @@ A minimal terminal UI for git — like lazygit, but only the parts you actually 
 - **Commits panel** — recent commits for the selected branch
 - **Diff preview** — full-screen color-coded diff for any changed file
 - **Markdown viewer** — rendered markdown preview with cursor navigation
-- **Panel management** — hide/show any panel, toggle remote branches
-- **Styled bottom bar** — shortcuts and panel toggle indicators at a glance
+- **Panel management** — hide/show any panel with keyboard shortcuts
+- **Worktrees** — view and navigate git worktrees
 - **Editor integration** — opens files in `$EDITOR`, auto-detects `nvim`, falls back to `vim`
 - **Auto-refresh** — syncs with external git changes every 2 seconds
 
@@ -71,13 +71,19 @@ Run `gitwit` inside any git repository.
 | Key | Action |
 |-----|--------|
 | `j` / `k` | Navigate |
-| `h` / `l` | Switch between local and remote |
 | `enter` | Checkout branch |
 | `B` | Create new branch |
-| `R` | Toggle remote branches |
 | `f` | Fetch all remotes |
 | `p` | Pull |
 | `P` | Push |
+| `v` | Switch to worktrees |
+
+### Worktrees
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Navigate |
+| `v` | Switch back to branches |
 
 ### Commits panel
 

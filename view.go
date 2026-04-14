@@ -49,6 +49,8 @@ var (
 	dimStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#787878"))
 
+	dimSelectedColor = lipgloss.Color("#9090a0")
+
 	treeDirStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#8899bb"))
 
@@ -130,43 +132,26 @@ func fitWidth(s string, width int) string {
 	return s
 }
 
-func statusTag(status string) string {
+func statusTag(status string, withBg func(lipgloss.Style) lipgloss.Style) string {
 	if len(status) < 2 {
-		return dimStyle.Render("?")
+		return withBg(dimStyle).Render("?")
 	}
 	x, y := status[0], status[1]
 	// Staged status (first char)
 	if x == 'M' || x == 'A' || x == 'D' || x == 'R' || x == 'C' {
-		return branchCurrentStyle.Render(string(x))
+		return withBg(branchCurrentStyle).Render(string(x))
 	}
 	// Unstaged status (second char)
 	if y == 'M' {
-		return statusModifiedStyle.Render("M")
+		return withBg(statusModifiedStyle).Render("M")
 	}
 	if y == 'D' {
-		return statusDeletedStyle.Render("D")
+		return withBg(statusDeletedStyle).Render("D")
 	}
 	if x == '?' {
-		return statusAddedStyle.Render("?")
+		return withBg(statusAddedStyle).Render("?")
 	}
-	return dimStyle.Render(string(y))
-}
-
-func statusTagPlain(status string) string {
-	if len(status) < 2 {
-		return "?"
-	}
-	x, y := status[0], status[1]
-	if x == 'M' || x == 'A' || x == 'D' || x == 'R' || x == 'C' {
-		return string(x)
-	}
-	if y == 'M' || y == 'D' {
-		return string(y)
-	}
-	if x == '?' {
-		return "?"
-	}
-	return string(y)
+	return withBg(dimStyle).Render(string(y))
 }
 
 func (m model) renderDiffView() string {
@@ -453,12 +438,13 @@ func (m *model) renderBranches(width, height int) string {
 		m.offsets[panelBranches] = cursor - height + 1
 	}
 
-	upstreamStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555566"))
 
 	// Measure column widths for local branches (display width, not byte count)
 	maxName := 0
 	maxUpstream := 0
 	maxSync := 0
+	maxMainAhead := 0
+	maxMainBehind := 0
 	for _, b := range m.branches {
 		nameLen := lipgloss.Width(b.name) + 2 // +2 for prefix ("● " or "  ")
 		if nameLen > maxName {
@@ -477,6 +463,16 @@ func (m *model) renderBranches(width, height int) string {
 		if lipgloss.Width(sync) > maxSync {
 			maxSync = lipgloss.Width(sync)
 		}
+		if b.mainAhead > 0 || b.mainBehind > 0 {
+			aStr := fmt.Sprintf("+%d", b.mainAhead)
+			bStr := fmt.Sprintf("-%d", b.mainBehind)
+			if len(aStr) > maxMainAhead {
+				maxMainAhead = len(aStr)
+			}
+			if len(bStr) > maxMainBehind {
+				maxMainBehind = len(bStr)
+			}
+		}
 	}
 	// Remote branch names also contribute to maxName
 	for _, rb := range m.remoteBranches {
@@ -490,6 +486,30 @@ func (m *model) renderBranches(width, height int) string {
 	for i := m.offsets[panelBranches]; i < total && i < m.offsets[panelBranches]+height; i++ {
 		isSelected := i == cursor && isActive
 		isCursor := i == cursor && !isSelected
+
+		// Determine styles based on selection state
+		var bg lipgloss.TerminalColor
+		hasBg := isSelected || isCursor
+		if isSelected {
+			bg = selectedStyle.GetBackground()
+		} else if isCursor {
+			bg = cursorStyle.GetBackground()
+		}
+		withBg := func(s lipgloss.Style) lipgloss.Style {
+			if hasBg {
+				return s.Background(bg)
+			}
+			return s
+		}
+		defaultFg := lipgloss.NewStyle()
+		mutedFg := dimStyle
+		if isSelected {
+			defaultFg = defaultFg.Foreground(selectedStyle.GetForeground())
+			mutedFg = lipgloss.NewStyle().Foreground(dimSelectedColor)
+		} else if isCursor {
+			defaultFg = defaultFg.Foreground(cursorStyle.GetForeground())
+			mutedFg = lipgloss.NewStyle().Foreground(dimSelectedColor)
+		}
 
 		if i < len(m.branches) {
 			// Local branch
@@ -525,112 +545,68 @@ func (m *model) renderBranches(width, height int) string {
 				syncPad = 0
 			}
 
-			if isSelected || isCursor {
-				baseStyle := cursorStyle
-				if isSelected {
-					baseStyle = selectedStyle
-				}
-				bg := baseStyle.GetBackground()
-				fg := baseStyle.GetForeground()
-
-				var nameCol string
-				if b.name == m.currentBranch {
-					dotStyle := lipgloss.NewStyle().Foreground(branchCurrentStyle.GetForeground()).Background(bg)
-					nameStyle := lipgloss.NewStyle().Foreground(fg).Background(bg)
-					nameCol = dotStyle.Render(prefix) + nameStyle.Render(b.name) + nameStyle.Render(strings.Repeat(" ", namePad))
-				} else {
-					seg := lipgloss.NewStyle().Foreground(fg).Background(bg)
-					nameCol = seg.Render(prefix+b.name) + seg.Render(strings.Repeat(" ", namePad))
-				}
-
-				upstreamCol := ""
-				if maxUpstream > 0 {
-					uStyle := lipgloss.NewStyle().Foreground(upstreamStyle.GetForeground()).Background(bg)
-					padStyle := lipgloss.NewStyle().Foreground(fg).Background(bg)
-					upstreamCol = padStyle.Render(" ") + uStyle.Render(b.upstream) + padStyle.Render(upstreamPad)
-				}
-
-				syncCol := ""
-				if maxSync > 0 {
-					padStyle := lipgloss.NewStyle().Foreground(fg).Background(bg)
-					s := ""
-					if b.ahead > 0 {
-						s += lipgloss.NewStyle().Foreground(aheadStyle.GetForeground()).Background(bg).Render(fmt.Sprintf("↑%d", b.ahead))
-					}
-					if b.behind > 0 {
-						s += lipgloss.NewStyle().Foreground(behindStyle.GetForeground()).Background(bg).Render(fmt.Sprintf("↓%d", b.behind))
-					}
-					syncCol = padStyle.Render(" ") + s + padStyle.Render(strings.Repeat(" ", syncPad))
-				}
-
-				mainCol := ""
-				if b.mainAhead > 0 || b.mainBehind > 0 {
-					dimSel := lipgloss.NewStyle().Foreground(dimStyle.GetForeground()).Background(bg)
-					aheadSel := lipgloss.NewStyle().Foreground(aheadStyle.GetForeground()).Background(bg)
-					behindSel := lipgloss.NewStyle().Foreground(behindStyle.GetForeground()).Background(bg)
-					mainCol = dimSel.Render(" main ") +
-						aheadSel.Render(fmt.Sprintf("+%d", b.mainAhead)) +
-						dimSel.Render("/") +
-						behindSel.Render(fmt.Sprintf("-%d", b.mainBehind))
-				}
-
-				content := nameCol + upstreamCol + syncCol + mainCol
-				// Pad remaining width with background
-				padStyle := lipgloss.NewStyle().Background(bg)
-				contentWidth := lipgloss.Width(content)
-				if contentWidth < width {
-					content += padStyle.Render(strings.Repeat(" ", width-contentWidth))
-				}
-				lines = append(lines, content)
+			// Name column
+			var nameCol string
+			if b.name == m.currentBranch {
+				nameCol = withBg(branchCurrentStyle).Render(prefix) + withBg(defaultFg).Render(b.name) + withBg(defaultFg).Render(strings.Repeat(" ", namePad))
 			} else {
-				var nameCol string
-				if b.name == m.currentBranch {
-					nameCol = branchCurrentStyle.Render(prefix+b.name) + strings.Repeat(" ", namePad)
-				} else {
-					nameCol = prefix + b.name + strings.Repeat(" ", namePad)
-				}
-
-				upstreamCol := ""
-				if maxUpstream > 0 {
-					upstreamCol = " " + upstreamStyle.Render(b.upstream) + upstreamPad
-				}
-
-				syncCol := ""
-				if maxSync > 0 {
-					s := ""
-					if b.ahead > 0 {
-						s += aheadStyle.Render(fmt.Sprintf("↑%d", b.ahead))
-					}
-					if b.behind > 0 {
-						s += behindStyle.Render(fmt.Sprintf("↓%d", b.behind))
-					}
-					syncCol = " " + s + strings.Repeat(" ", syncPad)
-				}
-
-				mainCol := ""
-				if b.mainAhead > 0 || b.mainBehind > 0 {
-					mainCol = " " + dimStyle.Render("main") + " " +
-						aheadStyle.Render(fmt.Sprintf("+%d", b.mainAhead)) +
-						dimStyle.Render("/") +
-						behindStyle.Render(fmt.Sprintf("-%d", b.mainBehind))
-				}
-
-				content := nameCol + upstreamCol + syncCol + mainCol
-				lines = append(lines, fitWidth(content, width))
+				nameCol = withBg(defaultFg).Render(prefix+b.name) + withBg(defaultFg).Render(strings.Repeat(" ", namePad))
 			}
+
+			// Upstream column
+			upstreamCol := ""
+			if maxUpstream > 0 {
+				upstreamCol = withBg(defaultFg).Render(" ") + withBg(mutedFg).Render(b.upstream) + withBg(defaultFg).Render(upstreamPad)
+			}
+
+			// Sync column
+			syncCol := ""
+			if maxSync > 0 {
+				s := ""
+				if b.ahead > 0 {
+					s += withBg(aheadStyle).Render(fmt.Sprintf("↑%d", b.ahead))
+				}
+				if b.behind > 0 {
+					s += withBg(behindStyle).Render(fmt.Sprintf("↓%d", b.behind))
+				}
+				syncCol = withBg(defaultFg).Render(" ") + s + withBg(defaultFg).Render(strings.Repeat(" ", syncPad))
+			}
+
+			// Main divergence column
+			mainCol := ""
+			if b.mainAhead > 0 || b.mainBehind > 0 {
+				aStr := fmt.Sprintf("+%d", b.mainAhead)
+				bStr := fmt.Sprintf("-%d", b.mainBehind)
+				mainCol = withBg(mutedFg).Render(" main ") +
+					withBg(aheadStyle).Render(fmt.Sprintf("%*s", maxMainAhead, aStr)) +
+					withBg(mutedFg).Render("/") +
+					withBg(behindStyle).Render(fmt.Sprintf("%*s", maxMainBehind, bStr))
+			}
+
+			content := nameCol + upstreamCol + syncCol + mainCol
+			if hasBg {
+				cw := lipgloss.Width(content)
+				if cw < width {
+					content += lipgloss.NewStyle().Background(bg).Render(strings.Repeat(" ", width-cw))
+				}
+			} else {
+				content = fitWidth(content, width)
+			}
+			lines = append(lines, content)
 		} else {
 			// Remote-only branch
 			ri := i - len(m.branches)
 			rb := m.remoteBranches[ri]
-			plain := truncate("  "+rb.name, width)
-			if isSelected {
-				lines = append(lines, selectedStyle.Width(width).Render(plain))
-			} else if isCursor {
-				lines = append(lines, cursorStyle.Width(width).Render(plain))
+			content := withBg(defaultFg).Render("  ") + withBg(mutedFg).Render(rb.remote+"/") + withBg(defaultFg).Render(rb.branch)
+			if hasBg {
+				cw := lipgloss.Width(content)
+				if cw < width {
+					content += lipgloss.NewStyle().Background(bg).Render(strings.Repeat(" ", width-cw))
+				}
 			} else {
-				styled := "  " + dimStyle.Render(rb.remote+"/") + rb.branch
-				lines = append(lines, fitWidth(styled, width))
+				content = fitWidth(content, width)
 			}
+			lines = append(lines, content)
 		}
 	}
 	for len(lines) < height {
@@ -659,23 +635,39 @@ func (m *model) renderWorktrees(width, height int) string {
 		if wt.bare {
 			label = "(bare)"
 		}
-		detail := dimStyle.Render(" " + wt.path)
 		prefix := "  "
 		if wt.branch == m.currentBranch {
 			prefix = "● "
 		}
-		plain := truncate(prefix+label+" "+wt.path, width)
+
+		withBg := func(s lipgloss.Style) lipgloss.Style { return s }
+		defStyle := lipgloss.NewStyle()
+		mutedFg := dimStyle
+		var bg lipgloss.TerminalColor
+		hasBg := false
 		if isSelected {
-			lines = append(lines, selectedStyle.Width(width).Render(plain))
-		} else {
-			var content string
-			if wt.branch == m.currentBranch {
-				content = branchCurrentStyle.Render("● "+label) + detail
-			} else {
-				content = "  " + label + detail
-			}
-			lines = append(lines, fitWidth(content, width))
+			bg = selectedStyle.GetBackground()
+			hasBg = true
+			withBg = func(s lipgloss.Style) lipgloss.Style { return s.Background(bg) }
+			defStyle = lipgloss.NewStyle().Foreground(selectedStyle.GetForeground()).Background(bg)
+			mutedFg = lipgloss.NewStyle().Foreground(dimSelectedColor)
 		}
+
+		var content string
+		if wt.branch == m.currentBranch {
+			content = withBg(branchCurrentStyle).Render(prefix) + defStyle.Render(label) + withBg(mutedFg).Render(" "+wt.path)
+		} else {
+			content = defStyle.Render(prefix+label) + withBg(mutedFg).Render(" "+wt.path)
+		}
+		if hasBg {
+			cw := lipgloss.Width(content)
+			if cw < width {
+				content += lipgloss.NewStyle().Background(bg).Render(strings.Repeat(" ", width-cw))
+			}
+		} else {
+			content = fitWidth(content, width)
+		}
+		lines = append(lines, content)
 	}
 	for len(lines) < height {
 		lines = append(lines, strings.Repeat(" ", width))
@@ -706,18 +698,32 @@ func (m *model) renderPanel(panel, width, height int) string {
 		line := truncate(items[i], width)
 		isSelected := i == cursor && panel == m.activePanel
 		isCursor := i == cursor && !isSelected
+
+		withBg := func(s lipgloss.Style) lipgloss.Style { return s }
+		defStyle := lipgloss.NewStyle()
+		mutedStyle := dimStyle
+		var bg lipgloss.TerminalColor
+		hasBg := false
+
 		if isSelected {
-			plain := truncate(m.plainLine(panel, i, items[i]), width)
-			rendered := selectedStyle.Width(width).Render(plain)
-			lines = append(lines, rendered)
+			bg = selectedStyle.GetBackground()
+			hasBg = true
+			withBg = func(s lipgloss.Style) lipgloss.Style { return s.Background(bg) }
+			defStyle = lipgloss.NewStyle().Foreground(selectedStyle.GetForeground()).Background(bg)
+			mutedStyle = lipgloss.NewStyle().Foreground(dimSelectedColor)
 		} else if isCursor {
-			plain := truncate(m.plainLine(panel, i, items[i]), width)
-			rendered := cursorStyle.Width(width).Render(plain)
-			lines = append(lines, rendered)
-		} else {
-			rendered := m.renderLine(panel, i, line, width)
-			lines = append(lines, rendered)
+			defStyle = lipgloss.NewStyle().Foreground(cursorStyle.GetForeground())
+			mutedStyle = lipgloss.NewStyle().Foreground(dimSelectedColor)
 		}
+
+		rendered := m.renderLine(panel, i, line, width, withBg, defStyle, mutedStyle)
+		if hasBg {
+			cw := lipgloss.Width(rendered)
+			if cw < width {
+				rendered += lipgloss.NewStyle().Background(bg).Render(strings.Repeat(" ", width-cw))
+			}
+		}
+		lines = append(lines, rendered)
 	}
 
 	// Pad remaining lines
@@ -728,71 +734,12 @@ func (m *model) renderPanel(panel, width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m model) branchDisplay(idx int) string {
-	if idx >= len(m.branches) {
-		return ""
-	}
-	b := m.branches[idx]
-	s := b.name
-	if b.upstream != "" {
-		s += " " + b.upstream
-	}
-	if b.ahead > 0 || b.behind > 0 {
-		s += " "
-		if b.ahead > 0 {
-			s += fmt.Sprintf("↑%d", b.ahead)
-		}
-		if b.behind > 0 {
-			s += fmt.Sprintf("↓%d", b.behind)
-		}
-	}
-	if b.mainAhead > 0 || b.mainBehind > 0 {
-		s += fmt.Sprintf(" main +%d/-%d", b.mainAhead, b.mainBehind)
-	}
-	return s
-}
-
-func (m model) plainLine(panel, idx int, line string) string {
-	switch panel {
-	case panelChanges:
-		if m.dirMode {
-			if idx < len(m.dirEntries) {
-				return m.dirEntries[idx].display
-			}
-			return line
-		}
-		if idx < len(m.changes) {
-			entry := m.changes[idx]
-			if !entry.isDir {
-				display := entry.display
-				tag := statusTagPlain(entry.status)
-				if lastConn := strings.LastIndex(display, "─ "); lastConn >= 0 {
-					prefix := display[:lastConn+len("─ ")]
-					name := display[lastConn+len("─ "):]
-					return prefix + tag + " " + name
-				}
-				return tag + " " + display
-			}
-		}
-		return line
-	case panelBranches:
-		display := m.branchDisplay(idx)
-		if line == m.currentBranch {
-			return "● " + display
-		}
-		return "  " + display
-	case panelCommits:
-		return line
-	}
-	return line
-}
-
-func (m model) renderLine(panel, idx int, line string, width int) string {
+func (m model) renderLine(panel, idx int, line string, width int, withBg func(lipgloss.Style) lipgloss.Style, defStyle, mutedStyle lipgloss.Style) string {
 	switch panel {
 	case panelChanges:
 		if m.dirMode {
 			if idx >= len(m.dirEntries) {
-				return line
+				return defStyle.Render(line)
 			}
 			entry := m.dirEntries[idx]
 			name := entry.display
@@ -801,62 +748,42 @@ func (m model) renderLine(panel, idx int, line string, width int) string {
 				prefix = name[:lastConn+len("─ ")]
 				name = name[lastConn+len("─ "):]
 			}
-			connPart := treeConnectorStyle.Render(prefix)
+			connPart := withBg(mutedStyle).Render(prefix)
 			if entry.isDir {
-				return connPart + treeDirStyle.Render(name)
+				return connPart + withBg(treeDirStyle).Render(name)
 			}
-			return connPart + name
+			return connPart + defStyle.Render(name)
 		}
 		if idx >= len(m.changes) {
-			return line
+			return defStyle.Render(line)
 		}
 		entry := m.changes[idx]
-		// Split connector prefix from the name
 		name := entry.display
 		prefix := ""
 		if lastConn := strings.LastIndex(name, "─ "); lastConn >= 0 {
 			prefix = name[:lastConn+len("─ ")]
 			name = name[lastConn+len("─ "):]
 		}
-		connPart := treeConnectorStyle.Render(prefix)
+		connPart := withBg(mutedStyle).Render(prefix)
 		if entry.isDir {
-			return connPart + treeDirStyle.Render(name)
+			return connPart + withBg(treeDirStyle).Render(name)
 		}
-		// Status indicator (e.g. M, A, D, ?) with color
-		status := entry.status
-		tag := statusTag(status)
+		tag := statusTag(entry.status, withBg)
 		switch {
-		case strings.Contains(status, "A"), strings.Contains(status, "?"):
-			return connPart + tag + " " + statusAddedStyle.Render(name)
-		case strings.Contains(status, "D"):
-			return connPart + tag + " " + statusDeletedStyle.Render(name)
+		case strings.Contains(entry.status, "A"), strings.Contains(entry.status, "?"):
+			return connPart + tag + defStyle.Render(" ") + withBg(statusAddedStyle).Render(name)
+		case strings.Contains(entry.status, "D"):
+			return connPart + tag + defStyle.Render(" ") + withBg(statusDeletedStyle).Render(name)
 		default:
-			return connPart + tag + " " + statusModifiedStyle.Render(name)
+			return connPart + tag + defStyle.Render(" ") + withBg(statusModifiedStyle).Render(name)
 		}
-
-	case panelBranches:
-		if idx >= len(m.branches) {
-			return line
-		}
-		b := m.branches[idx]
-		suffix := ""
-		if b.ahead > 0 {
-			suffix += " " + aheadStyle.Render(fmt.Sprintf("↑%d", b.ahead))
-		}
-		if b.behind > 0 {
-			suffix += " " + behindStyle.Render(fmt.Sprintf("↓%d", b.behind))
-		}
-		if line == m.currentBranch {
-			return branchCurrentStyle.Render("● "+line) + suffix
-		}
-		return "  " + line + suffix
 
 	case panelCommits:
 		parts := strings.SplitN(line, " ", 2)
 		if len(parts) == 2 {
-			return hashStyle.Render(parts[0]) + " " + parts[1]
+			return withBg(hashStyle).Render(parts[0]) + defStyle.Render(" "+parts[1])
 		}
-		return line
+		return defStyle.Render(line)
 	}
-	return line
+	return defStyle.Render(line)
 }

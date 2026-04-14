@@ -9,6 +9,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+func (m *model) reloadChanges() {
+	raw := loadChanges()
+	m.changesRaw = raw
+	m.changes = buildChangeTree(raw)
+	m.diffAdded, m.diffRemoved = diffStat()
+}
+
 func editorName() string {
 	if e := os.Getenv("EDITOR"); e != "" {
 		return e
@@ -49,9 +56,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.statusMsg = "✓ " + msg.op + " complete"
 			// Reload after successful git op
-			raw := loadChanges()
-			m.changesRaw = raw
-			m.changes = buildChangeTree(raw)
+			m.reloadChanges()
 			m.branches = loadBranches()
 			m.remoteBranches = loadRemoteBranches(m.branches)
 			m.worktrees = loadWorktrees()
@@ -69,9 +74,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.dirCursor = max(len(m.dirEntries)-1, 0)
 			}
 		}
-		raw := loadChanges()
-		m.changesRaw = raw
-		m.changes = buildChangeTree(raw)
+		m.reloadChanges()
 		return m, nil
 
 	case mdRenderedMsg:
@@ -86,9 +89,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		if !m.diffMode && !m.mdMode && !m.inputMode {
 			m.currentBranch = currentBranch()
-			raw := loadChanges()
-			m.changesRaw = raw
-			m.changes = buildChangeTree(raw)
+			m.reloadChanges()
 			m.branches = loadBranches()
 			m.remoteBranches = loadRemoteBranches(m.branches)
 			m.worktrees = loadWorktrees()
@@ -157,9 +158,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					_ = out
 					m.statusMsg = "✓ Committed: " + value
-					raw := loadChanges()
-					m.changesRaw = raw
-					m.changes = buildChangeTree(raw)
+					m.reloadChanges()
 					m.cursors[panelChanges] = 0
 					m.offsets[panelChanges] = 0
 					m.commits = loadCommits(m.selectedBranch())
@@ -380,9 +379,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								break
 							}
 						}
-						raw := loadChanges()
-						m.changesRaw = raw
-						m.changes = buildChangeTree(raw)
+						m.reloadChanges()
 						m.commits = loadCommits(m.selectedBranch())
 					}
 					return m, nil
@@ -399,9 +396,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.currentBranch = target
 				m.statusMsg = "Switched to " + target
-				raw := loadChanges()
-				m.changesRaw = raw
-				m.changes = buildChangeTree(raw)
+				m.reloadChanges()
 				m.branches = loadBranches()
 				m.remoteBranches = loadRemoteBranches(m.branches)
 				m.worktrees = loadWorktrees()
@@ -486,9 +481,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "r":
-			raw := loadChanges()
-			m.changesRaw = raw
-			m.changes = buildChangeTree(raw)
+			m.reloadChanges()
 			m.branches = loadBranches()
 			m.remoteBranches = loadRemoteBranches(m.branches)
 			m.worktrees = loadWorktrees()
@@ -542,9 +535,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						// File is unstaged — stage it
 						exec.Command("git", "add", "--", entry.filePath).Run()
 					}
-					raw := loadChanges()
-					m.changesRaw = raw
-					m.changes = buildChangeTree(raw)
+					m.reloadChanges()
 					if m.cursors[panelChanges] >= len(m.changes) {
 						m.cursors[panelChanges] = len(m.changes) - 1
 					}
@@ -559,9 +550,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.activePanel == panelChanges && !m.dirMode && len(m.changes) > 0 {
 				// Stage all files
 				exec.Command("git", "add", "-A").Run()
-				raw := loadChanges()
-				m.changesRaw = raw
-				m.changes = buildChangeTree(raw)
+				m.reloadChanges()
 				m.statusMsg = "Staged all files"
 			}
 			return m, nil

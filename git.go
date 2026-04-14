@@ -31,6 +31,24 @@ func loadChanges() []string {
 	return git("status", "--porcelain")
 }
 
+func diffStat() (added, removed int) {
+	// Unstaged changes
+	for _, line := range git("diff", "--numstat") {
+		var a, r int
+		fmt.Sscanf(line, "%d\t%d", &a, &r)
+		added += a
+		removed += r
+	}
+	// Staged changes
+	for _, line := range git("diff", "--cached", "--numstat") {
+		var a, r int
+		fmt.Sscanf(line, "%d\t%d", &a, &r)
+		added += a
+		removed += r
+	}
+	return
+}
+
 func mainBranch() string {
 	if exec.Command("git", "rev-parse", "--verify", "main").Run() == nil {
 		return "main"

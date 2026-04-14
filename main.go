@@ -19,9 +19,12 @@ func initialModel() model {
 		}
 	}
 	raw := loadChanges()
+	added, removed := diffStat()
 	m := model{
 		changesRaw:     raw,
 		changes:        buildChangeTree(raw),
+		diffAdded:      added,
+		diffRemoved:    removed,
 		branches:       branches,
 		remoteBranches: loadRemoteBranches(branches),
 		worktrees:      loadWorktrees(),

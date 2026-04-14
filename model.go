@@ -65,6 +65,8 @@ type mdRenderedMsg struct {
 type model struct {
 	changes        []changeEntry
 	changesRaw     []string // raw porcelain lines for count
+	diffAdded      int      // total lines added across all changes
+	diffRemoved    int      // total lines removed across all changes
 	branches       []branchEntry
 	remoteBranches []remoteBranchEntry
 	commits        []string

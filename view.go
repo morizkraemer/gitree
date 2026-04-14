@@ -101,7 +101,7 @@ func renderTabBar(tabs []string, active int, info string, width int, globalHints
 	}
 	left := strings.Join(parts, "")
 	if info != "" {
-		left += " " + dimStyle.Render(info)
+		left += " " + info
 	}
 	right := dimStyle.Render(globalHints)
 	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
@@ -355,13 +355,20 @@ func (m model) View() string {
 			if m.dirMode {
 				activeTab = 1
 			}
+			diffInfo := dimStyle.Render("v switch")
+			if m.diffAdded > 0 || m.diffRemoved > 0 {
+				diffInfo = aheadStyle.Render(fmt.Sprintf("+%d", m.diffAdded)) +
+					dimStyle.Render("/") +
+					behindStyle.Render(fmt.Sprintf("-%d", m.diffRemoved)) +
+					dimStyle.Render(" · v switch")
+			}
 			tabs := renderTabBar(
 				[]string{
 					fmt.Sprintf("Changes (%d/%d)", stagedCount, len(m.changesRaw)),
 					fmt.Sprintf("Files (%d)", len(m.dirEntries)),
 				},
 				activeTab,
-				"v switch",
+				diffInfo,
 				contentWidth,
 				hints,
 			)
@@ -383,7 +390,7 @@ func (m model) View() string {
 					fmt.Sprintf("Worktrees (%d)", len(m.worktrees)),
 				},
 				m.branchTab,
-				"v switch",
+				dimStyle.Render("v switch"),
 				contentWidth,
 				hints,
 			)
@@ -405,7 +412,7 @@ func (m model) View() string {
 			if commitLabel == "" {
 				commitLabel = "none"
 			}
-			tabs := renderTabBar([]string{"Commits"}, 0, commitLabel, contentWidth, hints)
+			tabs := renderTabBar([]string{"Commits"}, 0, dimStyle.Render(commitLabel), contentWidth, hints)
 			help := helpBarStyle.Render(" j/k navigate")
 			view := m.renderPanel(panelCommits, innerWidth, contentH)
 			content := view + "\n" + fitWidth(help, innerWidth)

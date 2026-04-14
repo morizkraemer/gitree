@@ -79,6 +79,9 @@ var (
 	helpBarStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#606080"))
 
+	helpKeyStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#9090b0"))
+
 	activeTabStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("#d4d4d4")).
@@ -109,6 +112,23 @@ func renderTabBar(tabs []string, active int, info string, width int, globalHints
 		gap = 1
 	}
 	return left + strings.Repeat(" ", gap) + right
+}
+
+// helpBar renders key/action pairs with brighter keys.
+// Each pair is "key action", separated by " · ".
+func helpBar(pairs ...string) string {
+	var parts []string
+	for _, p := range pairs {
+		// Split on first space: key + action
+		if idx := strings.Index(p, " "); idx >= 0 {
+			key := p[:idx]
+			action := p[idx:]
+			parts = append(parts, helpKeyStyle.Render(key)+helpBarStyle.Render(action))
+		} else {
+			parts = append(parts, helpKeyStyle.Render(p))
+		}
+	}
+	return " " + strings.Join(parts, helpBarStyle.Render(" · "))
 }
 
 func truncate(s string, max int) string {
@@ -159,7 +179,7 @@ func (m model) renderDiffView() string {
 	viewHeight := m.height - 4 // title + border + help inside
 
 	title := titleStyle.Render(fmt.Sprintf(" %s ", m.diffFile))
-	help := helpBarStyle.Render(" q/esc close · j/k scroll · d/u page · e edit")
+	help := helpBar("q/esc close", "j/k scroll", "d/u page", "e edit")
 
 	var lines []string
 	end := m.diffScroll + viewHeight
@@ -202,7 +222,7 @@ func (m *model) renderMdView() string {
 	viewHeight := m.height - 4 // title + border + help inside
 
 	title := titleStyle.Render(fmt.Sprintf(" %s ", m.mdFile))
-	help := helpBarStyle.Render(" q/esc close · j/k navigate · d/u page · e edit")
+	help := helpBar("q/esc close", "j/k navigate", "d/u page", "e edit")
 
 	if m.mdLines == nil {
 		loading := dimStyle.Render("  Loading...")
@@ -374,9 +394,9 @@ func (m model) View() string {
 			)
 			var help string
 			if m.dirMode {
-				help = helpBarStyle.Render(" ⏎ open/toggle")
+				help = helpBar("⏎ open/toggle")
 			} else {
-				help = helpBarStyle.Render(" spc stage · a all · c commit · d discard · ⏎ diff · e edit")
+				help = helpBar("space stage", "a all", "c commit", "d discard", "⏎ diff", "e edit")
 			}
 			view := m.renderPanel(panelChanges, innerWidth, contentH)
 			content := view + "\n" + fitWidth(help, innerWidth)
@@ -398,10 +418,10 @@ func (m model) View() string {
 			var view string
 			switch m.branchTab {
 			case 0:
-				help = helpBarStyle.Render(" ⏎ checkout · B new · f fetch · p pull · P push")
+				help = helpBar("⏎ checkout", "B new", "f fetch", "p pull", "P push")
 				view = m.renderBranches(innerWidth, contentH)
 			case 1:
-				help = helpBarStyle.Render(" ⏎ show path")
+				help = helpBar("⏎ show path")
 				view = m.renderWorktrees(innerWidth, contentH)
 			}
 			content := view + "\n" + fitWidth(help, innerWidth)
@@ -413,7 +433,7 @@ func (m model) View() string {
 				commitLabel = "none"
 			}
 			tabs := renderTabBar([]string{"Commits"}, 0, dimStyle.Render(commitLabel), contentWidth, hints)
-			help := helpBarStyle.Render("")
+			help := ""
 			view := m.renderPanel(panelCommits, innerWidth, contentH)
 			content := view + "\n" + fitWidth(help, innerWidth)
 			sections = append(sections, tabs, borderFn(p, h).Render(content))

@@ -642,11 +642,6 @@ func (m *model) renderWorktrees(width, height int) string {
 		if wt.bare {
 			label = "(bare)"
 		}
-		prefix := "  "
-		if wt.branch == m.currentBranch {
-			prefix = "● "
-		}
-
 		withBg := func(s lipgloss.Style) lipgloss.Style { return s }
 		defStyle := lipgloss.NewStyle()
 		mutedFg := dimStyle
@@ -660,12 +655,7 @@ func (m *model) renderWorktrees(width, height int) string {
 			mutedFg = lipgloss.NewStyle().Foreground(dimSelectedColor)
 		}
 
-		var content string
-		if wt.branch == m.currentBranch {
-			content = withBg(branchCurrentStyle).Render(prefix) + defStyle.Render(label) + withBg(mutedFg).Render(" "+wt.path)
-		} else {
-			content = defStyle.Render(prefix+label) + withBg(mutedFg).Render(" "+wt.path)
-		}
+		content := defStyle.Render("  "+label) + withBg(mutedFg).Render(" "+wt.path)
 		if hasBg {
 			cw := lipgloss.Width(content)
 			if cw < width {

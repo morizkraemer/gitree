@@ -505,15 +505,43 @@ func (m *model) renderBranches(width, height int) string {
 			}
 		}
 	}
-	// Remote branch names also contribute to maxName
+	// Remote-only branches go in the upstream column — include in maxUpstream
 	for _, rb := range m.remoteBranches {
-		nameLen := lipgloss.Width(rb.name) + 2
-		if nameLen > maxName {
-			maxName = nameLen
+		w := lipgloss.Width(rb.name)
+		if w > maxUpstream {
+			maxUpstream = w
 		}
 	}
 
+	// Ensure columns are at least as wide as headers
+	headerName := "branch"
+	headerUpstream := "remote"
+	headerSync := "sync"
+	if lipgloss.Width(headerName)+2 > maxName { // +2 for prefix
+		maxName = lipgloss.Width(headerName) + 2
+	}
+	if lipgloss.Width(headerUpstream) > maxUpstream {
+		maxUpstream = lipgloss.Width(headerUpstream)
+	}
+	if lipgloss.Width(headerSync) > maxSync {
+		maxSync = lipgloss.Width(headerSync)
+	}
+
+	// Header row
+	header := dimStyle.Render("  "+fitWidth(headerName, maxName-2))
+	if maxUpstream > 0 {
+		header += dimStyle.Render("   " + fitWidth(headerUpstream, maxUpstream))
+	}
+	if maxSync > 0 {
+		header += dimStyle.Render("   " + fitWidth(headerSync, maxSync))
+	}
+	if maxMainAhead > 0 || maxMainBehind > 0 {
+		header += dimStyle.Render("   diffs to main")
+	}
+
 	var lines []string
+	lines = append(lines, fitWidth(header, width))
+	height-- // header takes one line
 	for i := m.offsets[panelBranches]; i < total && i < m.offsets[panelBranches]+height; i++ {
 		isSelected := i == cursor && isActive
 		isCursor := i == cursor && !isSelected
@@ -587,7 +615,7 @@ func (m *model) renderBranches(width, height int) string {
 			// Upstream column
 			upstreamCol := ""
 			if maxUpstream > 0 {
-				upstreamCol = withBg(defaultFg).Render(" ") + withBg(mutedFg).Render(b.upstream) + withBg(defaultFg).Render(upstreamPad)
+				upstreamCol = withBg(defaultFg).Render("   ") + withBg(mutedFg).Render(b.upstream) + withBg(defaultFg).Render(upstreamPad)
 			}
 
 			// Sync column
@@ -600,7 +628,7 @@ func (m *model) renderBranches(width, height int) string {
 				if b.behind > 0 {
 					s += withBg(behindStyle).Render(fmt.Sprintf("↓%d", b.behind))
 				}
-				syncCol = withBg(defaultFg).Render(" ") + s + withBg(defaultFg).Render(strings.Repeat(" ", syncPad))
+				syncCol = withBg(defaultFg).Render("   ") + s + withBg(defaultFg).Render(strings.Repeat(" ", syncPad))
 			}
 
 			// Main divergence column
@@ -608,7 +636,7 @@ func (m *model) renderBranches(width, height int) string {
 			if b.mainAhead > 0 || b.mainBehind > 0 {
 				aStr := fmt.Sprintf("+%d", b.mainAhead)
 				bStr := fmt.Sprintf("-%d", b.mainBehind)
-				mainCol = withBg(mutedFg).Render(" main ") +
+				mainCol = withBg(mutedFg).Render("   main ") +
 					withBg(aheadStyle).Render(fmt.Sprintf("%*s", maxMainAhead, aStr)) +
 					withBg(mutedFg).Render("/") +
 					withBg(behindStyle).Render(fmt.Sprintf("%*s", maxMainBehind, bStr))
@@ -625,10 +653,15 @@ func (m *model) renderBranches(width, height int) string {
 			}
 			lines = append(lines, content)
 		} else {
-			// Remote-only branch
+			// Remote-only branch — render in the upstream column
 			ri := i - len(m.branches)
 			rb := m.remoteBranches[ri]
-			content := withBg(defaultFg).Render("  ") + withBg(mutedFg).Render(rb.remote+"/") + withBg(defaultFg).Render(rb.branch)
+			namePad := strings.Repeat(" ", maxName+3) // skip name column + gap
+			upstreamPad := maxUpstream - lipgloss.Width(rb.name)
+			if upstreamPad < 0 {
+				upstreamPad = 0
+			}
+			content := withBg(defaultFg).Render(namePad) + withBg(mutedFg).Render(rb.remote+"/"+rb.branch) + withBg(defaultFg).Render(strings.Repeat(" ", upstreamPad))
 			if hasBg {
 				cw := lipgloss.Width(content)
 				if cw < width {

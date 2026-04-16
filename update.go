@@ -398,6 +398,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.changes) > 0 {
 					entry := m.changes[m.cursors[panelChanges]]
 					if !entry.isDir {
+						if strings.HasSuffix(entry.filePath, ".md") {
+							m.mdMode = true
+							m.mdFile = entry.filePath
+							m.mdLines = nil
+							m.mdCursor = 0
+							m.mdOffset = 0
+							width := m.width - 4
+							file := entry.filePath
+							return m, func() tea.Msg {
+								lines, err := renderMarkdown(file, width)
+								return mdRenderedMsg{lines: lines, file: file, err: err}
+							}
+						}
 						m.diffLines = loadDiff(entry.filePath, entry.status)
 						m.diffFile = entry.filePath
 						m.diffScroll = 0
@@ -535,6 +548,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+
+		case "l", "right":
+			if m.activePanel == panelChanges && m.dirMode && len(m.dirEntries) > 0 && m.dirCursor < len(m.dirEntries) {
+				entry := m.dirEntries[m.dirCursor]
+				if entry.isDir && !m.dirExpanded[entry.filePath] {
+					m.dirExpanded[entry.filePath] = true
+					m.dirEntries = buildDirTree(m.dirExpanded)
+				}
+				return m, nil
+			}
+			return m, nil
+
+		case "h", "left":
+			if m.activePanel == panelChanges && m.dirMode && len(m.dirEntries) > 0 && m.dirCursor < len(m.dirEntries) {
+				entry := m.dirEntries[m.dirCursor]
+				if entry.isDir && m.dirExpanded[entry.filePath] {
+					delete(m.dirExpanded, entry.filePath)
+					m.dirEntries = buildDirTree(m.dirExpanded)
+					if m.dirCursor >= len(m.dirEntries) {
+						m.dirCursor = max(len(m.dirEntries)-1, 0)
+					}
+				}
+				return m, nil
+			}
+			return m, nil
 
 		case "e":
 			if m.activePanel == panelChanges && len(m.changes) > 0 {

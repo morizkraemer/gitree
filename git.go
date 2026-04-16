@@ -214,3 +214,15 @@ func loadCommitDetail(hash string) []string {
 	return git("show", "--stat", "--no-patch", hash)
 }
 
+func loadMainDiff() []string {
+	// Find the merge base with main/master
+	base := git("merge-base", "HEAD", "main")
+	if len(base) == 0 {
+		base = git("merge-base", "HEAD", "master")
+	}
+	if len(base) == 0 {
+		return nil
+	}
+	return git("diff", "--name-status", base[0])
+}
+

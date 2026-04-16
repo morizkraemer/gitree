@@ -68,7 +68,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.statusMsg = "✗ editor: " + msg.err.Error()
 		}
-		if m.dirMode {
+		if m.changesTab == 1 {
 			m.dirEntries = buildDirTree(m.dirExpanded)
 			if m.dirCursor >= len(m.dirEntries) {
 				m.dirCursor = max(len(m.dirEntries)-1, 0)
@@ -133,7 +133,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.remoteBranches = msg.remoteBranches
 		m.worktrees = msg.worktrees
 		m.commits = msg.commits
-		if m.dirMode {
+		if m.changesTab == 1 {
 			m.dirEntries = buildDirTree(m.dirExpanded)
 			if m.dirCursor >= len(m.dirEntries) {
 				m.dirCursor = max(len(m.dirEntries)-1, 0)
@@ -364,7 +364,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			switch m.activePanel {
 			case panelChanges:
-				if m.dirMode {
+				if m.changesTab == 2 {
+					if len(m.mainDiffFiles) > 0 && m.mainDiffCursor < len(m.mainDiffFiles) {
+						line := m.mainDiffFiles[m.mainDiffCursor]
+						parts := strings.SplitN(line, "\t", 2)
+						if len(parts) == 2 {
+							file := parts[1]
+							base := git("merge-base", "HEAD", "main")
+							if len(base) == 0 {
+								base = git("merge-base", "HEAD", "master")
+							}
+							if len(base) > 0 {
+								m.diffLines = git("diff", base[0], "--", file)
+								m.diffFile = file
+								m.diffScroll = 0
+								m.diffMode = true
+							}
+						}
+					}
+					return m, nil
+				}
+				if m.changesTab == 1 {
 					if len(m.dirEntries) > 0 && m.dirCursor < len(m.dirEntries) {
 						entry := m.dirEntries[m.dirCursor]
 						if entry.isDir {
@@ -498,7 +518,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "j", "down":
-			if m.activePanel == panelChanges && m.dirMode {
+			if m.activePanel == panelChanges && m.changesTab == 2 {
+				if m.mainDiffCursor < len(m.mainDiffFiles)-1 {
+					m.mainDiffCursor++
+				}
+				return m, nil
+			}
+			if m.activePanel == panelChanges && m.changesTab == 1 {
 				if m.dirCursor < len(m.dirEntries)-1 {
 					m.dirCursor++
 				}
@@ -529,7 +555,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "k", "up":
-			if m.activePanel == panelChanges && m.dirMode {
+			if m.activePanel == panelChanges && m.changesTab == 2 {
+				if m.mainDiffCursor > 0 {
+					m.mainDiffCursor--
+				}
+				return m, nil
+			}
+			if m.activePanel == panelChanges && m.changesTab == 1 {
 				if m.dirCursor > 0 {
 					m.dirCursor--
 				}
@@ -564,7 +596,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 
 		case "l", "right":
-			if m.activePanel == panelChanges && m.dirMode && len(m.dirEntries) > 0 && m.dirCursor < len(m.dirEntries) {
+			if m.activePanel == panelChanges && m.changesTab == 1 && len(m.dirEntries) > 0 && m.dirCursor < len(m.dirEntries) {
 				entry := m.dirEntries[m.dirCursor]
 				if entry.isDir && !m.dirExpanded[entry.filePath] {
 					m.dirExpanded[entry.filePath] = true
@@ -575,7 +607,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "h", "left":
-			if m.activePanel == panelChanges && m.dirMode && len(m.dirEntries) > 0 && m.dirCursor < len(m.dirEntries) {
+			if m.activePanel == panelChanges && m.changesTab == 1 && len(m.dirEntries) > 0 && m.dirCursor < len(m.dirEntries) {
 				entry := m.dirEntries[m.dirCursor]
 				if entry.isDir && m.dirExpanded[entry.filePath] {
 					delete(m.dirExpanded, entry.filePath)
@@ -606,7 +638,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.diffMode = true
 				return m, nil
 			}
-			if m.activePanel == panelChanges && !m.dirMode && len(m.changes) > 0 {
+			if m.activePanel == panelChanges && m.changesTab == 0 && len(m.changes) > 0 {
 				entry := m.changes[m.cursors[panelChanges]]
 				if !entry.isDir {
 					m.confirmMode = true
@@ -627,14 +659,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "v":
 			if m.activePanel == panelChanges {
-				m.dirMode = !m.dirMode
-				if m.dirMode {
+				m.changesTab = (m.changesTab + 1) % 3
+				if m.changesTab == 1 {
 					if m.dirExpanded == nil {
 						m.dirExpanded = make(map[string]bool)
 					}
 					m.dirEntries = buildDirTree(m.dirExpanded)
 					m.dirCursor = 0
 					m.dirOffset = 0
+				} else if m.changesTab == 2 {
+					m.mainDiffFiles = loadMainDiff()
+					m.mainDiffCursor = 0
+					m.mainDiffOffset = 0
 				}
 			} else if m.activePanel == panelBranches {
 				m.branchTab = (m.branchTab + 1) % 2
@@ -661,7 +697,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case " ":
-			if m.activePanel == panelChanges && !m.dirMode && len(m.changes) > 0 {
+			if m.activePanel == panelChanges && m.changesTab == 0 && len(m.changes) > 0 {
 				entry := m.changes[m.cursors[panelChanges]]
 				if !entry.isDir {
 					status := entry.status
@@ -684,7 +720,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "a":
-			if m.activePanel == panelChanges && !m.dirMode && len(m.changes) > 0 {
+			if m.activePanel == panelChanges && m.changesTab == 0 && len(m.changes) > 0 {
 				// Stage all files
 				exec.Command("git", "add", "-A").Run()
 				m.reloadChanges()
@@ -693,7 +729,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "c":
-			if m.activePanel == panelChanges && !m.dirMode {
+			if m.activePanel == panelChanges && m.changesTab == 0 {
 				// Check if there are staged changes
 				staged := git("diff", "--cached", "--name-only")
 				if len(staged) == 0 {

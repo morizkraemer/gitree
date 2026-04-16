@@ -95,12 +95,17 @@ type model struct {
 	worktreeCursor  int
 	worktreeOffset  int
 
-	// Directory browser mode (replaces changes panel)
-	dirMode     bool
+	// Changes panel tabs: 0=changes, 1=files, 2=diff to main
+	changesTab  int
 	dirEntries  []dirEntry
 	dirExpanded map[string]bool
 	dirCursor   int
 	dirOffset   int
+
+	// Diff to main tab
+	mainDiffFiles  []string
+	mainDiffCursor int
+	mainDiffOffset int
 
 	// Panel visibility (at least one must remain true)
 	showPanel [3]bool
@@ -175,7 +180,10 @@ func (m model) visibleCount() int {
 func (m model) panelItems(panel int) []string {
 	switch panel {
 	case panelChanges:
-		if m.dirMode {
+		if m.changesTab == 2 {
+			return m.mainDiffFiles
+		}
+		if m.changesTab == 1 {
 			items := make([]string, len(m.dirEntries))
 			for i, d := range m.dirEntries {
 				items[i] = d.display

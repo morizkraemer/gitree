@@ -375,10 +375,6 @@ func (m model) View() string {
 					stagedCount++
 				}
 			}
-			activeTab := 0
-			if m.dirMode {
-				activeTab = 1
-			}
 			vSwitch := helpKeyStyle.Render("v") + helpBarStyle.Render(" switch")
 			diffInfo := vSwitch
 			if m.diffAdded > 0 || m.diffRemoved > 0 {
@@ -391,19 +387,26 @@ func (m model) View() string {
 				[]string{
 					fmt.Sprintf("Changes (%d/%d)", stagedCount, len(m.changesRaw)),
 					fmt.Sprintf("Files (%d)", len(m.dirEntries)),
+					fmt.Sprintf("Main (%d)", len(m.mainDiffFiles)),
 				},
-				activeTab,
+				m.changesTab,
 				diffInfo,
 				contentWidth,
 				hints,
 			)
 			var help string
-			if m.dirMode {
-				help = helpBar("return open/toggle")
-			} else {
+			var view string
+			switch m.changesTab {
+			case 0:
 				help = helpBar("space stage", "a all", "c commit", "d discard", "return diff", "e edit")
+				view = m.renderPanel(panelChanges, innerWidth, contentH)
+			case 1:
+				help = helpBar("return open/toggle")
+				view = m.renderPanel(panelChanges, innerWidth, contentH)
+			case 2:
+				help = helpBar("return diff")
+				view = m.renderMainDiff(innerWidth, contentH)
 			}
-			view := m.renderPanel(panelChanges, innerWidth, contentH)
 			content := view + "\n" + fitWidth(help, innerWidth)
 			sections = append(sections, tabs, borderFn(p, h).Render(content))
 
@@ -730,12 +733,82 @@ func (m *model) renderWorktrees(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
+func (m *model) renderMainDiff(width, height int) string {
+	isActive := m.activePanel == panelChanges
+
+	if m.mainDiffCursor < m.mainDiffOffset {
+		m.mainDiffOffset = m.mainDiffCursor
+	}
+	if m.mainDiffCursor >= m.mainDiffOffset+height {
+		m.mainDiffOffset = m.mainDiffCursor - height + 1
+	}
+
+	var lines []string
+	for i := m.mainDiffOffset; i < len(m.mainDiffFiles) && len(lines) < height; i++ {
+		line := m.mainDiffFiles[i]
+		isSelected := i == m.mainDiffCursor && isActive
+		isCursor := i == m.mainDiffCursor && !isSelected
+
+		withBg := func(s lipgloss.Style) lipgloss.Style { return s }
+		defStyle := lipgloss.NewStyle()
+		mutedFg := dimStyle
+		var bg lipgloss.TerminalColor
+		hasBg := false
+
+		if isSelected {
+			bg = selectedStyle.GetBackground()
+			hasBg = true
+			withBg = func(s lipgloss.Style) lipgloss.Style { return s.Background(bg) }
+			defStyle = lipgloss.NewStyle().Foreground(selectedStyle.GetForeground()).Background(bg)
+			mutedFg = lipgloss.NewStyle().Foreground(dimSelectedColor)
+		} else if isCursor {
+			defStyle = lipgloss.NewStyle().Foreground(cursorStyle.GetForeground())
+			mutedFg = lipgloss.NewStyle().Foreground(dimSelectedColor)
+		}
+
+		// Parse name-status format: "M\tfile.go" or "A\tfile.go"
+		parts := strings.SplitN(line, "\t", 2)
+		var rendered string
+		if len(parts) == 2 {
+			status := parts[0]
+			file := parts[1]
+			var statusStyle lipgloss.Style
+			switch status {
+			case "M":
+				statusStyle = statusModifiedStyle
+			case "A":
+				statusStyle = statusAddedStyle
+			case "D":
+				statusStyle = statusDeletedStyle
+			default:
+				statusStyle = mutedFg
+			}
+			rendered = withBg(statusStyle).Render(status) + withBg(defStyle).Render(" "+file)
+		} else {
+			rendered = withBg(defStyle).Render(line)
+		}
+		_ = mutedFg
+		if hasBg {
+			cw := lipgloss.Width(rendered)
+			if cw < width {
+				rendered += lipgloss.NewStyle().Background(bg).Render(strings.Repeat(" ", width-cw))
+			}
+		}
+		lines = append(lines, rendered)
+	}
+
+	for len(lines) < height {
+		lines = append(lines, strings.Repeat(" ", width))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func (m *model) renderPanel(panel, width, height int) string {
 	items := m.panelItems(panel)
 
 	cursor := m.cursors[panel]
 	offset := &m.offsets[panel]
-	if panel == panelChanges && m.dirMode {
+	if panel == panelChanges && m.changesTab == 1 {
 		cursor = m.dirCursor
 		offset = &m.dirOffset
 	}
@@ -804,7 +877,7 @@ func (m *model) renderPanel(panel, width, height int) string {
 func (m model) renderLine(panel, idx int, line string, width int, withBg func(lipgloss.Style) lipgloss.Style, defStyle, mutedStyle lipgloss.Style) string {
 	switch panel {
 	case panelChanges:
-		if m.dirMode {
+		if m.changesTab == 1 {
 			if idx >= len(m.dirEntries) {
 				return defStyle.Render(line)
 			}

@@ -28,7 +28,7 @@ func currentBranch() string {
 }
 
 func loadChanges() []string {
-	return git("status", "--porcelain")
+	return git("status", "--porcelain", "-uall")
 }
 
 func diffStat() (added, removed int) {

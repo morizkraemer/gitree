@@ -441,10 +441,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case panelBranches:
 				if m.branchTab == 1 {
-					// Worktree: show path in status
 					if len(m.worktrees) > 0 && m.worktreeCursor < len(m.worktrees) {
 						wt := m.worktrees[m.worktreeCursor]
-						m.statusMsg = "Worktree: " + wt.path
+						if err := os.Chdir(wt.path); err != nil {
+							m.statusMsg = "✗ " + err.Error()
+						} else {
+							m.activeWorktree = wt.path
+							m.currentBranch = currentBranch()
+							m.reloadChanges()
+							m.branches = loadBranches()
+							m.remoteBranches = loadRemoteBranches(m.branches)
+							m.worktrees = loadWorktrees()
+							m.commits = loadCommits(m.selectedBranch())
+							m.cursors = [3]int{}
+							m.offsets = [3]int{}
+							for i, b := range m.branches {
+								if b.name == m.currentBranch {
+									m.cursors[panelBranches] = i
+									break
+								}
+							}
+							m.statusMsg = "Switched to " + wt.path
+						}
 					}
 					return m, nil
 				}
@@ -701,7 +719,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				entry := m.changes[m.cursors[panelChanges]]
 				if !entry.isDir {
 					status := entry.status
-					if strings.TrimSpace(status[:1]) != "" {
+					if strings.Contains(status, "?") {
+						// Untracked file — stage it
+						exec.Command("git", "add", "--", entry.filePath).Run()
+					} else if strings.TrimSpace(status[:1]) != "" {
 						// File has staged changes — unstage it
 						exec.Command("git", "reset", "HEAD", "--", entry.filePath).Run()
 					} else {

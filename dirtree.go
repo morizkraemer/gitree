@@ -14,7 +14,7 @@ type dirEntry struct {
 }
 
 func buildDirTree(expanded map[string]bool) []dirEntry {
-	files := git("ls-files", "-co", "--exclude-standard")
+	files := git("ls-files", "-co")
 	if files == nil {
 		return nil
 	}

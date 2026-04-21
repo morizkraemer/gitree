@@ -294,6 +294,13 @@ func (m model) renderBottomBar(width int) string {
 	}
 
 	quit := lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color("#787890")).Render("q quit")
+	if m.activeWorktree != "" {
+		parts := strings.Split(m.activeWorktree, "/")
+		wtName := parts[len(parts)-1]
+		wt := lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color("#8888bb")).Render("wt: " + wtName)
+		sep := lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color("#505070")).Render("  ·  ")
+		return bar.Render(" " + wt + sep + quit)
+	}
 	return bar.Render(" " + quit)
 }
 
@@ -429,7 +436,7 @@ func (m model) View() string {
 				help = helpBar("return checkout", "B new", "f fetch", "p pull", "P push")
 				view = m.renderBranches(innerWidth, contentH)
 			case 1:
-				help = helpBar("return show path")
+				help = helpBar("return switch")
 				view = m.renderWorktrees(innerWidth, contentH)
 			}
 			content := view + "\n" + fitWidth(help, innerWidth)
@@ -677,7 +684,7 @@ func (m *model) renderBranches(width, height int) string {
 			lines = append(lines, content)
 		}
 	}
-	for len(lines) < height {
+	for len(lines) <= height {
 		lines = append(lines, strings.Repeat(" ", width))
 	}
 	return strings.Join(lines, "\n")
@@ -716,7 +723,11 @@ func (m *model) renderWorktrees(width, height int) string {
 			mutedFg = lipgloss.NewStyle().Foreground(dimSelectedColor)
 		}
 
-		content := defStyle.Render("  "+label) + withBg(mutedFg).Render(" "+wt.path)
+		prefix := "  "
+		if wt.path == m.activeWorktree {
+			prefix = "* "
+		}
+		content := defStyle.Render(prefix+label) + withBg(mutedFg).Render(" "+wt.path)
 		if hasBg {
 			cw := lipgloss.Width(content)
 			if cw < width {

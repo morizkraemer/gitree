@@ -94,6 +94,7 @@ type model struct {
 	worktrees       []worktreeEntry
 	worktreeCursor  int
 	worktreeOffset  int
+	activeWorktree  string // path of currently active worktree (empty = main)
 
 	// Changes panel tabs: 0=changes, 1=files, 2=diff to main
 	changesTab  int
